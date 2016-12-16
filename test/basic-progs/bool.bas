@@ -1,0 +1,9 @@
+10 let X = 0.00000001
+20 if x then print "Non-zero float is true: x= "; x
+30 let x = 1/0
+40 if x then print "1/0 is true: x= "; x
+50 let x = 0/0
+60 if x then print "0/0 is true: x= "; x
+70 let x = 0
+80 let y = 0
+90 print (x/y), (1 = true), true
