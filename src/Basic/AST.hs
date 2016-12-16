@@ -1,19 +1,20 @@
-{-# LANGUAGE NoImplicitPrelude, PatternSynonyms, ViewPatterns #-}
+{-# LANGUAGE
+NoImplicitPrelude, PatternSynonyms, ViewPatterns,
+StandaloneDeriving, GeneralizedNewtypeDeriving #-}
 
-module Basic.AST
-  ( Loc
-  , Stmt (..)
-  , Program
-  )
-where
+module Basic.AST where
 
 
 import Basic.Prelude
+import Basic.Doub
+
 import Data.Vector
+import Data.Text (Text)
+import qualified Data.Text as T
 
 type Vec = Vector
-type Program = Vec Line
-type Line = Vec Stmt
+type Program =  [Line]
+type Line = (Int, [Stmt])
 type Uniq = Int
 
 
@@ -39,10 +40,13 @@ type Addr =
   )
 
 
-data Name = Name Text Uniq
+type Name = Text
 data Var
   = SVar Name -- | String variable
   | NVar Name -- | Numeric variable
+  | SArr Name Dimension -- | Indexed numeric array variable
+  | NArr Name Dimension -- | Indexed numeric string variable
+  deriving Show
 
 data Stmt
   = REM Text -- | A Comment
@@ -69,31 +73,50 @@ data Stmt
     Expr -- | Value assigned
                               
   | FOR  -- | Ranged looping
-    Var  -- | Loop variable
+    Var  -- | Loop variable. Invariant: Var is always a NVar
     Expr -- | Initial value of loop var.
     Expr -- | Limit of loop var (inclusive)
-    Expr -- | How much to change loop var by (calculated once, at beginning)
+    (Maybe Expr) -- | How much to change loop var by (calculated once, at beginning).
+                 -- When Nothing, step is 1
 
   | NEXT -- | Increment a FOR loop variable
+    [Var] -- | The variable(s) to increment.
+          -- If Nothing, increment "innermost" FOR loop variable
                                     
   | WHILE -- | General loop until terminal condition
     (Maybe Expr)  -- | Beginng test: Enter loop body if non-zero
 
   | WEND  -- | End of a WHILE loop
     (Maybe Expr)  -- | End test: Return to loop beginning only if zero
-                                          
-  | IF   -- | Conditional branching (single line form)
-    Expr -- | Predicate test.
-    [Stmt] -- | Consequents
-    [Stmt] -- | Alternatives
-      
-  | IFML -- | Conditional branching across multiple lines
+
+{- 
+Supporting IF blocks in *this* way is a bit tricky.
+They could be supported in the interpreter if operated on the full
+syntax, albeit somewhat awkwardly, as a special case of a normal
+IF statement -- alone on a line with no consequents or alternatives.
+
+Getting it right without incurring a lot of redundant parsing would require the
+Line parser to have an alternative for the if-block syntax. This constructor
+would have to hold lines of the program, making the transformation to the
+runtime form probably a bit harder.
+  | IFML -- | If conditional branching across multiple lines
     Expr -- | Predicate test
     Addr -- | Where to jump if predicate is false (either the ELSE block or
          --  after an ENDIF)
+
+-}
+  | IF   -- | Conditional branching (single line form)
+    Expr -- | Predicate test.
+    [Stmt] -- | Consequents
+    (Maybe [Stmt]) -- | Alternatives
+      
+
+  | IFGO -- | Conditional jump to line
+    Expr -- | Predicate test.
+    Int -- | Where to jump
     
   | DIM -- | Array declaration (and dimensioning)
-    [(Var, Dimension)] -- | List of array descriptions
+    [(Name, Dimension)] -- | List of array descriptions
       
   | RET -- | Return statement.  Signifies a GOTO the last GOSUB or ONGOSUB
         -- statement.
@@ -104,46 +127,67 @@ data Stmt
     [PrintArg] -- | List of print args
 
   | INPUT
-    Text  -- | Prompt
+    (Maybe Text)  -- | Prompt
     [Var] -- | Variables to bind
 
+  | NOP -- | Do-nothing statement
+        -- `10 PRINT "HI" : : : : : rem this is completely legal BASIC`
+    deriving (Show)
+
+    
 data PrintArg
-  = Tab Expr -- | Move print cursor to a given horizontal positition this can
+  = PTab Expr -- | Move print cursor to a given horizontal positition this can
              -- not move it backwards (according to ref impl)
     
-  | Com Expr -- | Print an expression followed by a tab/newline
-             -- depending on whether the Expr is the last in the arg list
+  | PCom Expr -- | Print an expression followed by a tab
       
-  | Sem Expr -- | Print an expression with tab replaced by a space or with
-             -- newline suppressed
+  | PSem Expr -- | Print an expression followed by:
+             --  * a space, if the expression is numeric
+             --  * nothing, if the expression is a string
+             -- `10 PRINT "there "; "are"; 2; "ducks";`
+             -- `there are 2 ducks >`
+  | PReg Expr -- | Print an expression identically to PSem, unless it
+              -- is the last element in the list of PrintArgs
+    deriving (Show)
 
     
 data Dimension
   = D1 Expr
   | D2 Expr Expr
+    deriving (Show)
 
 data Expr
-  = Prim (Op Expr)
-  | Paren Expr
-  | FunCall
-    Var -- | Function name
-    (Vec Expr) -- | Parameters
-  | Index
-    Var -- | Array being indexed into
-    (Vec Expr) -- |
+  = Prim -- | A "primitive" or builtin operation.
+    (Op Expr) -- | The actual operator invoked
 
-  | Var Var
+  | Paren -- | Expression grouped for precedence
+    Expr -- | Inner expressions
+    
+  | FunCall -- | Function call.
+            -- May be useful for user defined functions/subroutines, if added,
+            -- but now only used for builtin functions (INT, ABS, etc)
+    Name -- | Function name
+    [Expr] -- | Parameters
 
-  | Lit Literal
+  | Var -- | A variable.
+    Var -- | The variable ¯\_(ツ)_/¯
 
+  | Lit -- | A literal value 
+    Literal -- | The underlying literal
+    deriving (Show)
+
+
+
+          
 data Literal
-  = LInt Int16
-  | LFlt Float
+  = LNum Doub -- | See Basic.Doub
   | LStr Text
-  | LBool Bool
+    deriving (Show)
+
     
 data Op argType
   = Neg argType
+  | Not argType 
   | Add argType argType
   | Sub argType argType
   | Div argType argType
@@ -152,7 +196,6 @@ data Op argType
   | Mod argType argType
   | And argType argType
   | Or  argType argType
-  | Not argType argType
   | Xor argType argType
   | Eq  argType argType
   | Neq argType argType
@@ -160,6 +203,7 @@ data Op argType
   | Gte argType argType
   | Lt  argType argType
   | Lte argType argType
+    deriving (Show)
 
   
 
