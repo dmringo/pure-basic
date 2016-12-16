@@ -17,11 +17,15 @@ library
   hs-source-dirs:      src
   exposed-modules:     Basic
   build-depends:       attoparsec
+                     , attoparsec-expr >= 0.1.1.2
                      , base >= 4.7 && < 5
                      , containers >= 0.5.7.1
                      , mtl
                      , text
+                     , vector >= 0.11.0.0
                      , transformers >= 0.5.2.0
+                     , pretty-show
+
 
                      
   default-language:    Haskell2010

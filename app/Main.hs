@@ -1,6 +1,7 @@
 module Main where
 
-import Lib
+import Basic.Parser
+import Basic.Type  
 
 main :: IO ()
-main = someFunc
+main = undefined
