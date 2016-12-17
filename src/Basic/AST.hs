@@ -12,9 +12,10 @@ import Data.Vector
 import Data.Text (Text)
 import qualified Data.Text as T
 
+type LineNum = Int  
 type Vec = Vector
 type Program =  [Line]
-type Line = (Int, [Stmt])
+type Line = (LineNum, [Stmt])
 type Uniq = Int
 
 
@@ -124,7 +125,7 @@ runtime form probably a bit harder.
   | END -- | Terminates the program
 
   | PRINT -- | Print statement
-    [PrintArg] -- | List of print args
+    [PrintArg Expr] -- | List of print args
 
   | INPUT
     (Maybe Text)  -- | Prompt
@@ -135,18 +136,18 @@ runtime form probably a bit harder.
     deriving (Show)
 
     
-data PrintArg
-  = PTab Expr -- | Move print cursor to a given horizontal positition this can
+data PrintArg argType
+  = PTab argType -- | Move print cursor to a given horizontal positition this can
              -- not move it backwards (according to ref impl)
     
-  | PCom Expr -- | Print an expression followed by a tab
+  | PCom argType -- | Print an expression followed by a tab
       
-  | PSem Expr -- | Print an expression followed by:
+  | PSem argType -- | Print an expression followed by:
              --  * a space, if the expression is numeric
              --  * nothing, if the expression is a string
              -- `10 PRINT "there "; "are"; 2; "ducks";`
              -- `there are 2 ducks >`
-  | PReg Expr -- | Print an expression identically to PSem, unless it
+  | PReg argType -- | Print an expression identically to PSem, unless it
               -- is the last element in the list of PrintArgs
     deriving (Show)
 
