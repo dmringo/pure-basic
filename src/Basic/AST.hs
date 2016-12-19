@@ -1,5 +1,4 @@
-{-# LANGUAGE
-NoImplicitPrelude, PatternSynonyms, ViewPatterns,
+{-# LANGUAGE PatternSynonyms, ViewPatterns,
 TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
 
 module Basic.AST
@@ -11,7 +10,7 @@ module Basic.AST
   where
 
 
-import Basic.Prelude
+
 import Basic.Doub
 
 import Data.Ord (comparing)
@@ -343,7 +342,7 @@ instance Unparse Stmt where
                               
       FOR v b e ms
         -> "FOR" <+> unp v <+> equals <+> unp b <+>
-           "TO"  <+> unp b <+>
+           "TO"  <+> unp e <+>
            maybe empty (("STEP" <+>) . unp) ms
            
       NEXT vs

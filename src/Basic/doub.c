@@ -32,6 +32,7 @@ static inline long cmp(long trg, int ignored) { return ~trg; }
 makeOpFun(dblAnd, &)
 makeOpFun(dblOr,  |)
 makeOpFun(dblXor, ^)
+makeOpFun(dblMod, %)
 
 makeShFun(dblShr, shr)
 makeShFun(dblShl, shl)

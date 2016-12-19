@@ -7,11 +7,7 @@ module Basic.CodeGen
   where
 
 import Basic.AST
-import Basic.VM
 
-  
-
-  
 import Data.Map (Map)
 import Data.Monoid  
 import qualified Data.Map as M

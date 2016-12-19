@@ -133,7 +133,7 @@ instance Show FlowCTX where
                      "WHILE start: " ++ show s
       InSub s -> showString $ "SUB start: " ++ show s
                  
-                                   
+
   
 data EvalState =
   EV { heap :: Map Var Val
@@ -284,13 +284,13 @@ logGoto = loggHelp 6
 logg    = loggHelp 100
 loggHelp n =
   case n of
-    0 -> const (pure ())
-    1 -> const (pure ())
-    2 -> const (pure ())
---    3 -> const (pure ())
-    4 -> const (pure ())
-    5 -> const (pure ())
-    6 -> const (pure ())
+    0 -> const (pure ()) -- Expr
+    -- 1 -> const (pure ()) -- Line
+    2 -> const (pure ()) -- Stmt
+    -- 3 -> const (pure ()) -- Ctx
+    4 -> const (pure ()) -- End
+    -- 5 -> const (pure ()) -- For
+    6 -> const (pure ()) -- Goto
     _ -> liftIO . putStrLn
 
   
@@ -507,20 +507,20 @@ testFor mvs = do
       let decide :: VMState (Either (Maybe [Var]) PC)
           decide = do
                  eachLoop
-
                  logFor $ "start is " ++ show start
                  N enter <- eval test
                  logFor $  "result of test = " ++ show enter
                  pc <- getPC
                  if enter /= 0
                  then pure (Right start)
-                 else pure (Right $ pc + 1)
+                 else logFor "popping For" >> popFlow >> pure (Right $ pc + 1)
             
       case mvs of
-        Nothing -> decide
+        Nothing -> logFor "implicit next" >> decide
         Just (var:rest)
-          | lvar == var -> decide
-          | otherwise   -> popFlow >> pure (Left $ Just rest)
+          | lvar == var -> logFor "found the right var" >> decide
+          | otherwise   -> logFor "popping for missed var" >>
+                           popFlow >> pure (Left $ Just rest)
 
     Just _  -> nextError
 
