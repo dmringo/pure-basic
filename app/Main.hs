@@ -16,6 +16,8 @@ main = do
   name:_ <- getArgs
   runit name
 
+debug = False
+        
 runit :: String -> IO ()
 runit name = do         
   eprog <- validate <$> parseFile name
@@ -24,7 +26,7 @@ runit name = do
     Right prog ->
       let (vec, lmap) = remap prog
       in do
-        putStrLn $ pretty vec
+        when debug $ putStrLn $ pretty vec
         runProg vec lmap
          
       

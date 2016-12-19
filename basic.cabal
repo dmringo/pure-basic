@@ -15,7 +15,14 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Basic
+  exposed-modules:     Basic.Eval
+                     , Basic.AST
+                     , Basic.Validate
+                     , Basic.Parser
+                     , Basic.Type
+                     , Basic.CodeGen
+                     , Basic.Doub
+                     , Basic.Unparse
   build-depends:       attoparsec
                      , attoparsec-expr >= 0.1.1.2
                      , base >= 4.7 && < 5
@@ -38,6 +45,8 @@ executable basic
   hs-source-dirs:      app
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  extra-libraries:     doub
+  
   build-depends:       base
                      , basic
                      , containers >= 0.5.7.1

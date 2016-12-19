@@ -1,7 +1,7 @@
 {-# LANGUAGE 
 PatternGuards, MultiParamTypeClasses, FunctionalDependencies,
 FlexibleContexts, FlexibleInstances, TypeSynonymInstances,
-UndecidableInstances, OverloadedStrings #-}
+UndecidableInstances, OverloadedStrings, MultiWayIf #-}
 
 
 module Basic.Eval
@@ -14,7 +14,8 @@ import Basic.Type
 
 
 import Data.Maybe (fromMaybe)
-import Data.Monoid  
+import Data.Monoid
+import Data.List (uncons)  
 import Data.List.Split (splitOn)
 import Data.Map (Map)
 import qualified Data.Map as M  
@@ -33,7 +34,8 @@ import Control.Monad.State
 import Control.Monad.Except
 import Control.Monad.Extra
 
-import System.Random  
+import System.Random
+import System.IO (hFlush, stdout)  
   
 data Val
   = S Text
@@ -157,14 +159,15 @@ popFlow :: VMState (Maybe FlowCTX)
 popFlow = do
   ev <- get
   case flowStack ev of
-    []   -> pure Nothing
-    x:xs -> put ev{flowStack = xs} >> pure (Just x)
+    []   -> logCtx "popped from empty stack" >> pure Nothing
+    x:xs -> logCtx ("popped " ++ show x) >>
+            put ev{flowStack = xs} >>
+            pure (Just x)
             
 peekFlow :: VMState (Maybe FlowCTX)
 peekFlow = do
-  ctx <- popFlow
-  whenJust ctx (pushFlow . const)
-  pure ctx
+  mctx <- uncons . flowStack <$> get
+  pure $ fst <$> mctx
     
 pushRet :: VMState ()
 pushRet = pushFlow (InSub . succ)
@@ -284,12 +287,13 @@ logGoto = loggHelp 6
 logg    = loggHelp 100
 loggHelp n =
   case n of
+--    _ -> const (pure ()) -- All
     0 -> const (pure ()) -- Expr
-    -- 1 -> const (pure ()) -- Line
+    1 -> const (pure ()) -- Line
     2 -> const (pure ()) -- Stmt
-    -- 3 -> const (pure ()) -- Ctx
+    3 -> const (pure ()) -- Ctx
     4 -> const (pure ()) -- End
-    -- 5 -> const (pure ()) -- For
+    5 -> const (pure ()) -- For
     6 -> const (pure ()) -- Goto
     _ -> liftIO . putStrLn
 
@@ -342,7 +346,7 @@ instance Eval Stmt () where
         N e <- eval end
         let test = if s < 0
                    then Prim (Gt (Var var) (Lit $ LNum e))
-                   else Prim (Lt (Var var) (Lit $ LNum e))
+                   else Prim (Lte (Var var) (Lit $ LNum e))
         let eachLoop = do
                         res <- eval (Prim (Add (Var var) (Lit $ LNum s)))
                         setVar var res >> pure ()
@@ -462,6 +466,7 @@ instance Eval Stmt () where
       INPUT mtext vars
         -> do
         whenJust mtext (liftIO . T.putStr)
+        liftIO $ hFlush stdout
         inputs <- loopM takeInput []
         mapM_ (uncurry setVar) $ zip vars inputs
         incrPC
@@ -504,21 +509,21 @@ testFor mvs = do
     Nothing -> nextError
     Just (InFor start lvar test eachLoop)
       -> do
-      let decide :: VMState (Either (Maybe [Var]) PC)
-          decide = do
+      let decide :: [Var] -> VMState (Either (Maybe [Var]) PC)
+          decide more = do
                  eachLoop
-                 logFor $ "start is " ++ show start
+                 logFor $ "test is " ++ show test
                  N enter <- eval test
-                 logFor $  "result of test = " ++ show enter
+                 logFor $ "result is " ++ show enter
                  pc <- getPC
-                 if enter /= 0
-                 then pure (Right start)
-                 else logFor "popping For" >> popFlow >> pure (Right $ pc + 1)
+                 if | enter /= 0 -> pure (Right start)
+                    | null more  -> popFlow >> pure (Right $ pc + 1)
+                    | otherwise  -> popFlow >> pure (Left $ Just more)
             
       case mvs of
-        Nothing -> logFor "implicit next" >> decide
+        Nothing -> logFor "implicit next" >> decide []
         Just (var:rest)
-          | lvar == var -> logFor "found the right var" >> decide
+          | lvar == var -> logFor "found the right var" >> decide rest
           | otherwise   -> logFor "popping for missed var" >>
                            popFlow >> pure (Left $ Just rest)
 
