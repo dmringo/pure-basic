@@ -131,12 +131,12 @@ while   = WHILE   <$> sym "while" **> opt expr
 wend    = WEND    <$> sym "wend"  **> opt expr
 
 dim     = DIM     <$> sym "dim"   **> dimpair `sepBy1` comma
-  where dimpair = (,) <$> varName <*> dimension
+  where dimpair = (,) <$> varName <*> dims
           
 set     = LET     <$> (opt $ sym "let") **> var <*> equals **> expr
 for     = FOR     <$> sym "for" **> numVar <*> equals **> expr <*>
           sym "to" **> expr <*> opt (sym "step" **> expr)
-condgo  = IFGO    <$> ifthen <*> lineNum 
+condgo  = IFGO    <$> ifthen <*> lineNum <*> pure False
 cond    = IF      <$> ifthen <*> statements <*> opt (sym "else" **> statements)
 ifthen  = sym "if" **> expr <* sym "then"
               
@@ -157,10 +157,8 @@ end     = pure END <* sym "end"
 ret     = pure RET <* sym "return"
 
 
-dimension :: Parser Dimension          
-dimension = tok (parens d1) <|> tok (parens d2)
-  where d1 = D1  <$> expr
-        d2 = D2  <$> expr <*> comma **> expr
+dims :: Parser Dims
+dims = Dims <$> parens (expr `sepBy1` comma)
           
 var, stringVar, numVar, numArr, stringArr :: Parser Var
 
@@ -174,10 +172,10 @@ stringVar = SVar <$> (T.snoc <$> varName <*> tok (char '$'))
 numVar = NVar <$> tok varName
 
 -- | Indexed numeric array reference
-numArr = NArr <$> varName <*> dimension
+numArr = NArr <$> varName <*> dims
 
 -- | Indexed string array reference
-stringArr = SArr <$> (T.snoc <$> varName <*> tok (char '$')) <*> dimension
+stringArr = SArr <$> (T.snoc <$> varName <*> tok (char '$')) <*> dims
          
 -- | Parse a variable name.  Legal characters are alphanumeric and underscore.
 -- First character must be a letter.  31 character limit is ignored.

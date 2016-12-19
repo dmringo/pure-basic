@@ -1,19 +1,31 @@
 {-# LANGUAGE
 NoImplicitPrelude, PatternSynonyms, ViewPatterns,
-StandaloneDeriving, GeneralizedNewtypeDeriving #-}
+TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
 
-module Basic.AST where
+module Basic.AST
+  ( LineNum, Program, Vec, Addr, Name, Line
+  , Var(..), nameOf, dimsOf
+  , Stmt(..),  PrintArg(..), Expr(..), Literal(..)
+  , Dims(..), Op(..)
+  )
+  where
 
 
 import Basic.Prelude
 import Basic.Doub
 
-import Data.Vector
+import Data.Ord (comparing)
+import Data.Function (on)  
+import qualified Data.Vector as V
 import Data.Text (Text)
 import qualified Data.Text as T
 
+import Text.Printf
+import Basic.Unparse  
+
+  
 type LineNum = Int  
-type Vec = Vector
+type Vec = V.Vector
 type Program =  [Line]
 type Line = (LineNum, [Stmt])
 type Uniq = Int
@@ -42,12 +54,50 @@ type Addr =
 
 
 type Name = Text
+
+newtype Dims = Dims [Expr] deriving (Show)
+
+instance PrintfArg Dims where
+  formatArg d fmt
+    | fmtChar (vFmt 'M' fmt) == 'M'
+    = formatString (pretty d) fmt{ fmtChar = 's'
+                                 , fmtPrecision = Nothing }
+    | otherwise
+    = errorBadFormat $ fmtChar fmt
+  
 data Var
   = SVar Name -- | String variable
   | NVar Name -- | Numeric variable
-  | SArr Name Dimension -- | Indexed numeric array variable
-  | NArr Name Dimension -- | Indexed numeric string variable
+  | SArr Name Dims -- | Indexed numeric array variable
+  | NArr Name Dims -- | Indexed numeric string variable
   deriving Show
+
+nameOf :: Var -> Name
+nameOf (SVar n) = n
+nameOf (NVar n) = n
+nameOf (SArr n _) = n
+nameOf (NArr n _) = n
+
+dimsOf (SArr _ d) = d
+dimsOf (NArr _ d) = d
+                    
+instance Eq Var where
+  a == b = a `compare` b == EQ
+                    
+instance Ord Var where
+  SVar a   `compare` SVar b   = a `compare` b
+  NVar a   `compare` NVar b   = a `compare` b
+  SArr a _ `compare` SArr b _ = a `compare` b
+  NArr a _ `compare` NArr b _ = a `compare` b
+  SArr a _ `compare` _        = GT
+  _        `compare` SArr _ _ = LT
+  NArr _ _ `compare` _        = GT
+  _        `compare` NArr _ _ = LT
+  SVar   _ `compare` _        = GT
+  _        `compare` SVar _   = LT                                
+                                
+
+
 
 data Stmt
   = REM Text -- | A Comment
@@ -115,9 +165,11 @@ runtime form probably a bit harder.
   | IFGO -- | Conditional jump to line
     Expr -- | Predicate test.
     Int -- | Where to jump
+    Bool -- | HACK: Did I generate this or was it present in the source?
+
     
   | DIM -- | Array declaration (and dimensioning)
-    [(Name, Dimension)] -- | List of array descriptions
+    [(Name, Dims)] -- | List of array descriptions
       
   | RET -- | Return statement.  Signifies a GOTO the last GOSUB or ONGOSUB
         -- statement.
@@ -152,11 +204,6 @@ data PrintArg argType
     deriving (Show)
 
     
-data Dimension
-  = D1 Expr
-  | D2 Expr Expr
-    deriving (Show)
-
 data Expr
   = Prim -- | A "primitive" or builtin operation.
     (Op Expr) -- | The actual operator invoked
@@ -207,18 +254,132 @@ data Op argType
     deriving (Show)
 
   
+-- Unparsing
 
-pattern Nil :: Vec a
-pattern Nil <- (null -> True)
-  where Nil = empty -- Now it's bidirectional
-pattern V x xs <- (tupd head init -> (x,xs))
-  where V = cons
+statements :: [Stmt] -> Doc
+statements =  hsep . punctuate colon . map unp
 
-tupd f g x = (f x, g x)
+instance Unparse Dims where
+  unp (Dims l) =
+    parens . hsep . punctuate comma $ map unp l
+           
 
-foo           :: Vec a -> Maybe a
-foo Nil       = Nothing
-foo (x `V` _) = Just x
+instance Unparse Line where
+  unp (n, ss) =
+    int n <+> statements ss
+
+instance Unparse Literal where
+  unp (LStr t) = quotes $ unp t
+  unp (LNum d) = unp d
+
+instance Unparse a => Unparse (PrintArg a) where
+  unp a =
+    case a of
+      PTab v -> "TAB" <> parens (unp v)
+      PCom v -> unp v <> comma
+      PSem v -> unp v <> semi
+      PReg v -> unp v
+
+instance Unparse Expr where
+  unp e =
+    case e of
+      Prim op -> unp op
+      Paren e -> parens $ unp e
+      Var v -> unp v
+      Lit l -> unp l
+      FunCall n args ->
+        unp n <+> parens (hsep $ punctuate comma $ map unp args)
+
+instance Unparse Var where
+  unp v =
+    case v of
+      SVar n -> unp n
+      NVar n -> unp n
+      SArr n d -> unp n <> unp d
+      NArr n d -> unp n <> unp d
+
+instance Unparse a => Unparse (Op a) where 
+  unp o =
+    case o of
+      Neg a -> minus <> unp a
+      Not a -> "NOT" <+> unp a
+      Add a b -> mk a plus   b
+      Sub a b -> mk a minus  b
+      Div a b -> mk a divide b
+      Mul a b -> mk a times  b
+      Pow a b -> mk a tothe  b
+      Mod a b -> mk a "MOD"  b
+      And a b -> mk a "AND"  b
+      Or  a b -> mk a "OR"   b
+      Xor a b -> mk a "XOR"  b
+      Eq  a b -> mk a equals b
+      Neq a b -> mk a "<>"   b
+      Gt  a b -> mk a ">"    b
+      Gte a b -> mk a ">="   b
+      Lt  a b -> mk a "<"    b
+      Lte a b -> mk a "<="   b
+    where mk a op b = unp a <+> op <+> unp b
+        
+instance Unparse Stmt where
+  unp s =
+    case s of
+      REM t
+        -> "REM" <+> unp t
+      
+      GOTO i
+        -> "GOTO" <+> unp i
+      
+      ONGOTO e is
+        -> "ON" <+> unp e <+> "GOTO" <+> hsep (map unp is)
+            
+      GOSUB i
+        -> "GOSUB" <+> unp i
+
+      ONGOSUB e is
+        -> "ON" <+> unp e <+> "GOSUB" <+> hsep (map unp is)
+      
+      LET v e
+        -> "LET" <+> unp v <+> equals <+> unp e
+                              
+      FOR v b e ms
+        -> "FOR" <+> unp v <+> equals <+> unp b <+>
+           "TO"  <+> unp b <+>
+           maybe empty (("STEP" <+>) . unp) ms
+           
+      NEXT vs
+        -> "NEXT" <+> hsep (punctuate comma $ map unp vs)
+                                    
+      WHILE me
+        -> "WHILE" <+> unp me
+
+      WEND  me
+        -> "WEND" <+> unp me
+
+      IF e cs mas
+        -> "IF" <+> unp e <+> "THEN" <+> statements cs <+>
+           maybe empty statements mas
+                 
+      IFGO e i _
+        -> "IF" <+> unp e <+> "THEN" <+> int i
+
+      DIM assoc
+        -> "DIM" <+> hsep (punctuate comma dims)
+        where dims = [text (T.unpack n) <+> unp d | (n,d) <- assoc]
+          
+      RET -> "RET"                                                                  
+      END -> "END"
+
+      PRINT args
+        -> "PRINT" <+> hsep (map unp args)
+
+      INPUT prompt vars
+        -> "INPUT" <+> maybe empty (quotes . text . T.unpack) prompt <+>
+           hsep (punctuate comma $ map unp vars)
+
+      NOP -> " "
 
 
-
+instance Unparse (Vec Stmt) where
+  unp v = vcat . V.toList $ V.imap
+          (\i s -> unp i <+> unp s) v
+             

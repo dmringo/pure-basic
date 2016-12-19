@@ -1,6 +1,6 @@
 
 
-module VM where
+module Basic.VM where
 
 
 import Basic.AST as AST
@@ -65,9 +65,30 @@ type LoopContext =
   , Doub  -- | Step size for a loop variable
   )
 
+data CtrlFrame
+  = Ret PAddr
+    -- | Saved return address from a GOSUB
+    
+  | For
+    PAddr
+    -- | address of loop increment then entry test
+    --  loop entry looks like:
+    -- 1 push frame
+    -- 2 jump 4
+    -- 3 increment var
+    -- 4 if
+    
+    PAddr
+    -- | address of exit when entry test fails
+    -- This can change at runtime, so it's useful to hold here.
+    -- It would otherwise have to be a pointer to an address in the Heap
+    -- or something.
+    -- Note, if we generate
+
+  | While
   
 data VMState = VM
-  { loopStack :: [LoopContext] -- | Stack of loop contexts
+  { controlStack :: [LoopContext] -- | Stack of loop contexts
   , dataStack :: [Value] -- | Expression eval stack
   , heap      :: (Vec Value) -- | for named variables
   }
@@ -91,6 +112,9 @@ data Instr
     
   | JNZ PAddr
   -- | Jump to addr if last result (top of dataStack) is non-zero
+
+  | Call PAddr
+  -- |
     
   | OUT (PrintArg Target)
   -- | Print a Target to stdout

@@ -1,8 +1,11 @@
 {-# LANGUAGE FlexibleInstances, ViewPatterns, OverloadedStrings #-}
-{-# LANGUAGE ViewPatterns #-}
+
 module Basic.Type
   ( typecheck
   , TypeException (..)
+  , Type (..)
+  , TC (..)
+  , TCResult (..)
   )
   where
 
@@ -13,6 +16,7 @@ import Control.Exception
 import Data.Monoid hiding (Any, All)
 import Data.Text hiding (map, tail, zipWith, foldr)
 import qualified Data.Text as T
+import Text.Printf
 import Prelude hiding (unlines, null)  
 
             
@@ -27,6 +31,14 @@ text = pack . show
 data Type = Numeric | Stringy | Void | Any | All | None
             deriving (Eq, Show)
 
+instance PrintfArg Type where
+  formatArg t fmt
+    | fmtChar (vFmt 'T' fmt) == 'T'
+    = formatString (show t) fmt{ fmtChar = 's'
+                               , fmtPrecision = Nothing }
+    | otherwise
+    = errorBadFormat $ fmtChar fmt
+                     
 
 data TCResult = No [(Text, Type, Type)] | Yes Type
 
@@ -152,14 +164,12 @@ instance TC (Op Expr) where
       Xor a1 a2 -> Numeric ~= a1 ~= a2
 
 
-instance TC Dimension where
+instance TC Dims where
   typeof = const Void
-  unifies d =
-    case d of
-      (D1 e)     -> Numeric ~= e
-      (D2 e1 e2) -> Numeric ~= e1 ~= e2
+  unifies (Dims l) = Numeric ~= l
 
-instance TC PrintArg where
+
+instance TC (PrintArg Expr)where
   typeof = const Any -- Maybe should inherit inner expr type?
   unifies a =
     case a of
@@ -186,7 +196,7 @@ instance TC Stmt where
       WHILE mexpr -> Numeric ~= mexpr
       WEND mexpr  -> Numeric ~= mexpr
       LET v u     -> v ~= u
-      IFGO e _    -> Numeric ~= e
+      IFGO e _ _  -> Numeric ~= e
       DIM dims    -> mconcat . map (unifies . snd) $ dims
       FOR i init end step ->
         Numeric ~= i ~= init ~= end ~= step

@@ -3,11 +3,16 @@ StandaloneDeriving, GeneralizedNewtypeDeriving,
 ForeignFunctionInterface #-}
 
 module Basic.Doub
-  (Doub (..))
+  ( Doub (..)
+  , (%)
+  , module Data.Bits
+  )
 where
 
 import Data.Bits
 import GHC.Read
+import System.Random
+import Text.Printf  
 
 -- TODO: Need to think about how to handle the fact that 0/0 is -inf in Basic.
 --   Could just be a bug that I choose not implement.
@@ -30,9 +35,11 @@ deriving instance Ord        Doub
 deriving instance Real       Doub
 deriving instance RealFloat  Doub
 deriving instance RealFrac   Doub
+deriving instance Random     Doub         
 
 instance Show Doub where
-  show = show . getDbl
+  showsPrec p (D d) =
+    showString $ printf "%.4f" d
 
 instance Read Doub where
   readPrec = D <$> readPrec
@@ -64,6 +71,9 @@ foreign import ccall dblShl :: Doub -> Int -> Doub
 foreign import ccall dblShr :: Doub -> Int -> Doub
 foreign import ccall dblRol :: Doub -> Int -> Doub
 foreign import ccall dblRor :: Doub -> Int -> Doub
+foreign import ccall dblMod :: Doub -> Doub -> Doub
 
 
-
+infixl 7 %
+(%) :: Doub -> Doub -> Doub      
+(%) = dblMod
