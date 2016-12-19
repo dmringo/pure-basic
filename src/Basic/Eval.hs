@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE 
 PatternGuards, MultiParamTypeClasses, FunctionalDependencies,
 FlexibleContexts, FlexibleInstances, TypeSynonymInstances,
@@ -11,8 +12,9 @@ module Basic.Eval
 import Basic.Doub hiding (D)
 import Basic.AST
 import Basic.Type
-
-
+import Basic.Parser (parseDoubs) -- for INPUT
+  
+import Data.Char (isNumber)
 import Data.Maybe (fromMaybe)
 import Data.Monoid
 import Data.List (uncons)  
@@ -42,6 +44,10 @@ data Val
   | N Doub
   | A Dims (Vec Val)
 
+instance Eq Val where
+  S a == S b = a == b
+  N a == N b = a == b
+  _   == _   = False    
 
 instance TC Val where
   unifies = Yes . typeof
@@ -340,6 +346,13 @@ instance Eval Stmt () where
         -> ongoto e addrs
       ONGOSUB e addrs
         -> pushRet >> ongoto e addrs
+      
+      LET var e -> eval e >>= setVar var >> incrPC
+
+      -- NEXT without any vars specified implicitly
+      NEXT vs -> handleNext vs -- This is a doozy
+
+
       FOR var start end mstep
         -> do
         N s <- maybe (pure $ N 1) eval mstep
@@ -364,10 +377,6 @@ instance Eval Stmt () where
               Nothing -> forError
               Just i  -> setPC i
         
-      NEXT []
-        -> loopM testFor Nothing >>= setPC
-      NEXT vs
-        -> loopM testFor (Just vs) >>= setPC
 
       WHILE mexpr
         -> do
@@ -472,18 +481,28 @@ instance Eval Stmt () where
         incrPC
         where
           ty = typeof $ head vars
+          filt =
+            case ty of
+              Stringy -> \line -> pure [S line]
+              Numeric ->
+                \line ->
+                  case parseDoubs line of
+                    Just vals -> pure $ map N vals
+                    Nothing -> do
+                        putStrLn $ "Couldn't parse " ++ show line
+                        pure []
+                           
           takeInput ls =            
             do
-              let filt = case ty of
-                           Stringy -> pure . S . T.pack
-                           Numeric -> map (N . read) . splitOn ","
-              new <- liftIO $ filt <$> getLine
-              let acc = ls ++ new 
+              new <- liftIO (filt =<< T.getLine)
+              let acc = ls ++ new
               if length acc >= length vars
               then pure (Right acc)
-              else liftIO $ putStr "\n??" >> pure (Left acc)
+              else do
+                liftIO $ putStr "\n??" >> hFlush stdout
+                pure (Left acc)
 
-      LET var e -> eval e >>= setVar var >> incrPC
+
 
 
 
@@ -501,61 +520,97 @@ ongoto e addrs =
     if i > 0 && i <= length addrs
       then goto (addrs !! (i - 1))
       else incrPC
-  
-testFor :: Maybe [Var] -> VMState (Either (Maybe [Var]) PC)
-testFor mvs = do
-  ctx <- peekFlow
-  case ctx of
-    Nothing -> nextError
-    Just (InFor start lvar test eachLoop)
-      -> do
-      let decide :: [Var] -> VMState (Either (Maybe [Var]) PC)
-          decide more = do
-                 eachLoop
-                 logFor $ "test is " ++ show test
-                 N enter <- eval test
-                 logFor $ "result is " ++ show enter
-                 pc <- getPC
-                 if | enter /= 0 -> pure (Right start)
-                    | null more  -> popFlow >> pure (Right $ pc + 1)
-                    | otherwise  -> popFlow >> pure (Left $ Just more)
-            
-      case mvs of
-        Nothing -> logFor "implicit next" >> decide []
-        Just (var:rest)
-          | lvar == var -> logFor "found the right var" >> decide rest
-          | otherwise   -> logFor "popping for missed var" >>
-                           popFlow >> pure (Left $ Just rest)
 
-    Just _  -> nextError
+-- `handleNext`, `matchFors` and `decideFor` manage the logic necessary for
+-- determining how to respond to a NEXT statement. The argument lets it
+-- determine whether the NEXT was invoked with variables (e.g. `NEXT I, J`) or
+-- without. `handlNext` is used with loopM, returning a Right value holding the
+-- address to goto once it's determined or a Left value if it needs to keep
+-- popping contexts.  There are some opportunities for BASIC runtime errors
+-- here: If a NEXT references a variable that isn't an iterator of some loop, or
+-- if we are not, in fact, inside a loop.
+handleNext [] = loopM matchFors Nothing >>= setPC
+handleNext vs = loopM matchFors (Just vs) >>= setPC                
+matchFors mvs =
+  do
+    -- We don't necessarily want to pop a context; that only happens
+    -- when the loop terminates. Since that _should_ happen less often,
+    -- we'll peek at it first, and actually pop it later if necessary.
+    ctx <- peekFlow
+    case ctx of
+      -- No loop context on the stack: NEXT without FOR error
+      Nothing -> nextError
+      Just (InFor start lvar test eachLoop)
+        -> do
+        case mvs of
+          -- Implicit NEXT: The InFor we found is the one we use.
+          -- Don't give `decide` more variables to test if the loop
+          -- terminal condition is met.                    
+          Nothing -> logFor "implicit next" >>
+                     decideFor test eachLoop [] start
+          -- Explicit NEXT                                      
+          Just (var:rest)
+               -- The InFor is the one we want if its loop variable is
+               -- the same as the one at the head of the list.  We
+               -- give `decide` the `rest` of the variables, in case
+               -- the terminal condition is met and we need to test
+               -- another variable.
+             | lvar == var ->
+               logFor "found the right var" >>
+               decideFor test eachLoop rest start
+                      
+               -- If the variables don't match, we keep looking for
+               -- the correct loop context.  This means we don't
+               -- change the list of variables NEXT was given.
+             | otherwise   ->
+               logFor "popping for missed var" >>
+               popFlow >> pure (Left $ Just (var:rest))
+
+          -- Only reached when NEXT invoked with explicit variables.
+          -- If a variable that isn't an iterator of a FOR loop is
+          -- specified, we'll get a "NEXT without FOR" error
+          Just [] -> nextError
+                     
+      -- Context is not a For loop: can't invoke NEXT
+      -- when the innermost context is a WHILE or SUB
+      Just _  -> nextError
+
+-- We need a lot of context to determine how to proceed once a the
+-- right InFor context is found.
+decideFor :: Expr -- Expression to test for loop re-entry
+          -> VMState () -- VMState update 
+          -> [Var] -> PC
+       -> VMState (Either (Maybe [Var]) PC)
+decideFor test loop more start =
+  do
+    -- `loop` is the state-changing update that increments
+    -- or decrements the loop variable.
+    loop
+    N enter <- eval test
+    logFor $ "test is " ++ show test
+    logFor $ "result is " ++ show enter
+    pc <- getPC
+    -- If `enter` is True, we jump back to the loop start
+    if | enter /= 0 -> pure (Right start)
+       -- Else, if there are no more variables to test, we simply move
+       -- on to the next statement
+       | null more  -> popFlow >> pure (Right $ pc + 1)
+       -- If there _are_ variables remaining, we need to keep popping
+       -- contexts to determine where to go
+       | otherwise  -> popFlow >> pure (Left $ Just more)
 
 
 instance Eval Var Val where
-  eval = getVar
+  eval = getVar -- much nicer than Stmt
          
 instance Eval Expr Val where
   eval e = do
-    logExpr ("evalling " ++ show e)
-         
-    res <-
-      case e of
-      Lit l -> eval l
-      Prim op -> eval op
-      Paren e -> eval e
-      Var v -> eval v
-      FunCall s [e] 
-           | name <- T.toLower s, name == "int" ->
-        do
-          N d <- eval e
-          pure (N $ fromIntegral $ floor d)
-      FunCall s [e]
-           | name <- T.toLower s, name == "rnd" ->
-        do
-          n <- eval e
-          case n of
-            N d | d < 0 -> error "Seeding not implemented"
-                | d == 1 -> liftIO randomIO >>= pure . N
-                | otherwise -> liftIO (randomRIO (0, d)) >>= pure . N
+    logExpr ("evaling " ++ show e)
+    res <- case e of
+             Lit l   -> eval l
+             Prim op -> eval op
+             Paren e -> eval e
+             Var v   -> eval v
 
     logExpr ("got " ++ show res)
     pure res
@@ -563,43 +618,73 @@ instance Eval Expr Val where
 instance Eval (Op Expr) Val where
   eval o =
     case o of
-     Neg a   -> do
+      Rnd a -> do
+        n <- eval a
+        case n of
+          N d | d < 0 -> error "RND seeding not implemented yet"
+              | d == 1 -> liftIO randomIO >>= pure . N
+              | otherwise -> liftIO (randomRIO (0, d)) >>= pure . N
+
+      Chp a -> do
+             N d <- eval a
+             pure (N $ fromIntegral $ floor d)
+
+      Neg a -> do
              N d <- eval a
              pure . N  $ negate d
-     Not a   -> do
+      Not a -> do
              N d <- eval a
              pure $ if d == 0
                     then N 1
                     else N 0
-     Add a b ->
-       case typeof a of
-         Stringy -> do
-             S l <- eval a
-             S r <- eval b
-             pure $ S (l <> r)
-         Numeric -> numericOp a b (+)
-     Sub a b -> numericOp a b (-)
-     Div a b -> numericOp a b (/)
-     Mul a b -> numericOp a b (*)
-     Pow a b -> numericOp a b (**)
-     Mod a b -> numericOp a b (%)
-     And a b -> numericOp a b (.&.)
-     Or  a b -> numericOp a b (.|.)
-     Xor a b -> numericOp a b xor
-     Eq  a b -> numericOp a b (fromBool (==))
-     Neq a b -> numericOp a b (fromBool (/=))
-     Gt  a b -> numericOp a b (fromBool (>))
-     Gte a b -> numericOp a b (fromBool (>=))
-     Lt  a b -> numericOp a b (fromBool (<))
-     Lte a b -> numericOp a b (fromBool (<=))
+      Add a b ->
+        case typeof a of
+          Stringy -> do
+              S l <- eval a
+              S r <- eval b
+              pure $ S (l <> r)
+          Numeric -> numericOp a b (+)
+      Sub a b -> numericOp a b (-)
+      Div a b -> numericOp a b (/)
+      Mul a b -> numericOp a b (*)
+      Pow a b -> numericOp a b (**)
+      Mod a b -> numericOp a b (%)
+      And a b -> numericOp a b (.&.)
+      Or  a b -> numericOp a b (.|.)
+      Xor a b -> numericOp a b xor
+      Eq  a b -> overloadedOp a b (fromBool (==))
+      Neq a b -> overloadedOp a b (fromBool (/=))
+      Gt  a b -> overloadedOp a b (fromBool (>))
+      Gte a b -> overloadedOp a b (fromBool (>=))
+      Lt  a b -> overloadedOp a b (fromBool (<))
+      Lte a b -> overloadedOp a b (fromBool (<=))
 
-fromBool op a b | a `op` b = 1
+-- | Turn a comparison operator into a C-like operator, returning 1 for True
+-- and 0 for False.
+fromBool :: Ord a => (a -> a -> Bool) -> (a -> a -> Doub)
+fromBool op a b | a `op` b  = 1
                 | otherwise = 0
 numericOp a b op = do
   N l <- eval a
   N r <- eval b
   pure $ N (l `op` r)
-               
+
+-- Helper for evaluating operators that work on Numerics and Strings
+overloadedOp :: Expr -> Expr
+             -- Holy crap! A practical use of RankNTypes
+             -> (forall a . Ord a => a -> a -> Doub)
+             -> VMState Val
+overloadedOp a b op = do
+  l <- eval a
+  r <- eval b
+  case (l, r) of
+    -- This is why we need RankNTypes.  The `op` is valid for any type installed
+    -- in Ord.  Without higher rank types, trying to use it here will fail
+    -- unification because it could only be inferred as an operator on Text or Doub
+    (S x, S y) -> pure $ N (x `op` y)
+    (N x, N y) -> pure $ N (x `op` y)
+    (S _, _  ) -> badType Stringy Numeric
+    _ -> badType Numeric Stringy
 
 instance Eval Literal Val where
   eval (LNum d) = pure $ N d

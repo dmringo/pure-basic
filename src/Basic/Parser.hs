@@ -40,15 +40,28 @@ parseProgram txt = case parseEOF prog txt of
                      Left msg -> Left . toException $ ParseException msg
                      Right prg -> Right prg
 
-               
+-- | Parse a list of Numeric types.
+-- Used in Eval for INPUT statement
+parseDoubs :: Text -> Maybe [Doub]
+parseDoubs t = let parser = litNum `sepBy1` comma
+               in case parseOnly parser t of
+                    Left _ -> Nothing
+                    Right ds -> Just ds
+
+-- | Run a parser expecting end of input following.  Note that endOfInput always
+-- succeeds when there is nothing left to be consumed, so `many' endOfInput`
+-- will diverge.
 parseEOF = parseOnly . (<* (skipSpace <* endOfInput))
 
+-- | Optional combinator. Returns a Just when parse succeeds, Nothing otherwise.
 opt :: Parser a -> Parser (Maybe a)
 opt p = option Nothing (Just <$> p)
 
+-- | Between combinator for things like parenthetical expressions        
 between :: Parser a -> Parser b -> Parser c -> Parser c
 between l r m = l *> m <* r
 
+-- | Parse something between parens                
 parens :: Parser a -> Parser a                
 parens = (<?> "parens") . (sym "(" `between` sym ")")
          
@@ -60,7 +73,7 @@ tok = (<* takeWhile isHorizontalSpace)
 sym :: Text -> Parser Text
 sym t = tok (asciiCI t) <?> show t
       
-
+-- | Parse a whole program (many lines)
 prog :: Parser Program
 prog = many' line
        
@@ -184,21 +197,14 @@ varName = T.cons <$> letter <*> takeTill (notInClass varChars)
   where varChars = '_' : ['0'.. '9'] ++ ['a' .. 'z'] ++ ['A' .. 'Z']
 
            
-expr, parenexpr, funcall, variable, literal :: Parser Expr
+expr, parenexpr, variable, literal :: Parser Expr
 expr = buildExpressionParser opTab term
+term = choice [parenexpr, builtIn, variable, literal]
 
-term = choice [parenexpr, funcall, variable, literal]
-       
--- | Functions are limited to the `int()` rounding function and the `rnd()`
--- function for generating random numbers.
-funcall = intCall <|> rndCall
-  where
-    -- Only recognizing "int(x) and rnd(x)" as functions for now.
-    -- A more general approach should be taken if more are added.
-    intCall = FunCall <$> sym "int" <*> anArg
-    rndCall = FunCall <$> sym "rnd" <*> anArg
-    anArg = (:[]) <$> parens expr
-            
+builtIn = Prim <$> (rndCall <|> intCall)
+rndCall = Rnd <$> sym "rnd" **> parens expr
+intCall = Chp <$> sym "int" **> parens expr
+                   
 variable = Var <$> var
 literal = Lit <$> ((LStr <$> litString <|> LNum <$> litNum))
 parenexpr = Paren <$> parens expr

@@ -107,10 +107,6 @@ instance TC TCResult where
 instance TC Expr where
   unifies e =
     case e of
-      FunCall (toLower -> name) args
-        | isNumFun name -> mconcat . map (Numeric ~=) $ args
-        | otherwise -> error ("unknown function in TC? " ++ show name)
-
       Paren e -> unifies e
       Prim op -> unifies op
       Var v   -> unifies v
@@ -120,10 +116,6 @@ instance TC Expr where
 
   typeof e =
     case e of
-      FunCall (toLower -> name) args
-        | isNumFun name -> Numeric
-        | otherwise -> error ("unknown function in TC? " ++ show name)
-
       Paren e -> typeof e
       Prim op -> typeof op
       Var v   -> typeof v
@@ -135,13 +127,15 @@ isNumFun n = n == "rnd" || n == "int"
              
 
 instance TC (Op Expr) where
-  -- Ops always return numeric types
+  -- Ops usually return numeric types
+  typeof (Add a b) = typeof a
   typeof op = Numeric
               
   unifies op = 
     case op of
+      Chp arg -> Numeric ~= arg
+      Rnd arg -> Numeric ~= arg
       Neg arg -> Numeric ~= arg
-
       Not arg -> Numeric ~= arg
 
       -- Overloaded operators

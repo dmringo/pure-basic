@@ -1,6 +1,6 @@
 {-# LANGUAGE
 StandaloneDeriving, GeneralizedNewtypeDeriving,
-ForeignFunctionInterface #-}
+ForeignFunctionInterface, MultiWayIf #-}
 
 module Basic.Doub
   ( Doub (..)
@@ -39,8 +39,9 @@ deriving instance Random     Doub
 
 instance Show Doub where
   showsPrec p (D d) =
-    showString $ printf "%.4f" d
-
+    let (i, f) = properFraction d
+    in if | f == 0 -> showString $ show i
+          | otherwise -> showString $ show d
 instance Read Doub where
   readPrec = D <$> readPrec
 

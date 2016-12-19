@@ -209,13 +209,14 @@ data Expr
 
   | Paren -- | Expression grouped for precedence
     Expr -- | Inner expressions
-    
+
+  {- It was a little silly to implement the INT and RND builtins like this.
+     Function calls might be implemented someday, but for now, they're not
+
   | FunCall -- | Function call.
-            -- May be useful for user defined functions/subroutines, if added,
-            -- but now only used for builtin functions (INT, ABS, etc)
     Name -- | Function name
     [Expr] -- | Parameters
-
+   -}
   | Var -- | A variable.
     Var -- | The variable ¯\_(ツ)_/¯
 
@@ -233,19 +234,21 @@ data Literal
 
     
 data Op argType
-  = Neg argType
-  | Not argType 
-  | Add argType argType
-  | Sub argType argType
-  | Div argType argType
-  | Mul argType argType
-  | Pow argType argType
-  | Mod argType argType
-  | And argType argType
-  | Or  argType argType
-  | Xor argType argType
-  | Eq  argType argType
-  | Neq argType argType
+  = Neg argType -- | Arithmetic negation `-5 -> 5`
+  | Not argType -- | Logical not: `NOT 1.2 -> 0`, `NOT 0 -> 1`
+  | Chp argType -- | Integer truncation: `INT(3.6) -> 3`
+  | Rnd argType -- | Return a random number. See basic.manual.txt
+  | Add argType argType -- | Addition OR string concatenation.
+  | Sub argType argType -- | Subtraction
+  | Div argType argType -- | Division
+  | Mul argType argType -- | Multiplication
+  | Pow argType argType -- | Exponentiation
+  | Mod argType argType -- | Modulus operator
+  | And argType argType -- | Bitwise AND 
+  | Or  argType argType -- | Bitwise OR
+  | Xor argType argType -- | Bitwise XOR
+  | Eq  argType argType -- | Comparing Numbers and Strings
+  | Neq argType argType 
   | Gt  argType argType
   | Gte argType argType
   | Lt  argType argType
@@ -286,8 +289,6 @@ instance Unparse Expr where
       Paren e -> parens $ unp e
       Var v -> unp v
       Lit l -> unp l
-      FunCall n args ->
-        unp n <+> parens (hsep $ punctuate comma $ map unp args)
 
 instance Unparse Var where
   unp v =
@@ -302,6 +303,8 @@ instance Unparse a => Unparse (Op a) where
     case o of
       Neg a -> minus <> unp a
       Not a -> "NOT" <+> unp a
+      Chp a -> "INT" <> parens (unp a)
+      Rnd a -> "RND" <> parens (unp a)
       Add a b -> mk a plus   b
       Sub a b -> mk a minus  b
       Div a b -> mk a divide b
